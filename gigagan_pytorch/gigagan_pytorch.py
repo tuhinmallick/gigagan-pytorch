@@ -45,10 +45,7 @@ def is_empty(arr: Iterable):
     return len(arr) == 0
 
 def default(*vals):
-    for val in vals:
-        if exists(val):
-            return val
-    return None
+    return next((val for val in vals if exists(val)), None)
 
 def cast_tuple(t, length = 1):
     return t if isinstance(t, tuple) else ((t,) * length)
@@ -57,9 +54,7 @@ def is_power_of_two(n):
     return log2(n).is_integer()
 
 def safe_unshift(arr):
-    if len(arr) == 0:
-        return None
-    return arr.pop(0)
+    return None if len(arr) == 0 else arr.pop(0)
 
 def divisible_by(numer, denom):
     return (numer % denom) == 0
@@ -81,8 +76,7 @@ def is_unique(arr):
 
 def cycle(dl):
     while True:
-        for data in dl:
-            yield data
+        yield from dl
 
 def num_to_groups(num, divisor):
     groups, remainder = divmod(num, divisor)
@@ -891,8 +885,12 @@ class Generator(BaseGenerator):
 
         self.unconditional = unconditional
 
-        assert not (unconditional and exists(text_encoder))
-        assert not (unconditional and exists(style_network) and style_network.dim_text_latent > 0)
+        assert not unconditional or not exists(text_encoder)
+        assert (
+            not unconditional
+            or not exists(style_network)
+            or style_network.dim_text_latent <= 0
+        )
         assert unconditional or (exists(text_encoder) and text_encoder.dim == style_network.dim_text_latent), 'the `dim_text_latent` on your StyleNetwork must be equal to the `dim` set for the TextEncoder'
 
         assert is_power_of_two(image_size)
@@ -905,8 +903,6 @@ class Generator(BaseGenerator):
         is_adaptive = num_conv_kernels > 1
         dim_kernel_mod = num_conv_kernels if is_adaptive else 0
 
-        style_embed_split_dims = []
-
         adaptive_conv = partial(AdaptiveConv2DMod, kernel = 3, num_conv_kernels = num_conv_kernels)
 
         # initial 4x4 block and conv
@@ -914,11 +910,7 @@ class Generator(BaseGenerator):
         self.init_block = nn.Parameter(torch.randn(dim_latent, 4, 4))
         self.init_conv = adaptive_conv(dim_latent, dim_latent)
 
-        style_embed_split_dims.extend([
-            dim_latent,
-            dim_kernel_mod
-        ])
-
+        style_embed_split_dims = [dim_latent, dim_kernel_mod]
         # main network
 
         num_layers = int(log2(image_size) - 1)
@@ -1028,7 +1020,7 @@ class Generator(BaseGenerator):
 
     @property
     def total_params(self):
-        return sum([p.numel() for p in self.parameters() if p.requires_grad])
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @property
     def device(self):
@@ -1051,22 +1043,21 @@ class Generator(BaseGenerator):
         # which requires global text tokens to adaptively select the kernels from the main contribution in the paper
         # and fine text tokens to attend to using cross attention
 
-        if not self.unconditional:
-            if exists(texts) or exists(text_encodings):
-                assert exists(texts) ^ exists(text_encodings), 'either raw texts as List[str] or text_encodings (from clip) as Tensor is passed in, but not both'
-                assert exists(self.text_encoder)
-
-                if exists(texts):
-                    text_encoder_kwargs = dict(texts = texts)
-                elif exists(text_encodings):
-                    text_encoder_kwargs = dict(text_encodings = text_encodings)
-
-                global_text_tokens, fine_text_tokens, text_mask = self.text_encoder(**text_encoder_kwargs)
-            else:
-                assert all([*map(exists, (global_text_tokens, fine_text_tokens, text_mask))]), 'raw text or text embeddings were not passed in for conditional training'
-        else:
+        if self.unconditional:
             assert not any([*map(exists, (texts, global_text_tokens, fine_text_tokens))])
 
+        elif exists(texts) or exists(text_encodings):
+            assert exists(texts) ^ exists(text_encodings), 'either raw texts as List[str] or text_encodings (from clip) as Tensor is passed in, but not both'
+            assert exists(self.text_encoder)
+
+            if exists(texts):
+                text_encoder_kwargs = dict(texts = texts)
+            elif exists(text_encodings):
+                text_encoder_kwargs = dict(text_encodings = text_encodings)
+
+            global_text_tokens, fine_text_tokens, text_mask = self.text_encoder(**text_encoder_kwargs)
+        else:
+            assert all([*map(exists, (global_text_tokens, fine_text_tokens, text_mask))]), 'raw text or text embeddings were not passed in for conditional training'
         # determine styles
 
         if not exists(styles):
@@ -1142,10 +1133,7 @@ class Generator(BaseGenerator):
 
         assert is_empty([*conv_mods]), 'convolutions were incorrectly modulated'
 
-        if return_all_rgbs:
-            return rgb, rgbs
-
-        return rgb
+        return (rgb, rgbs) if return_all_rgbs else rgb
 
 # discriminator
 
@@ -1172,13 +1160,12 @@ class SimpleDecoder(nn.Module):
 
         layers = [conv2d_3x3(dim, dim)]
 
-        for dim_in, dim_out in zip(dims[:-1], dims[1:]):
-            layers.append(nn.Sequential(
-                Upsample(dim_in),
-                conv2d_3x3(dim_in, dim_out),
-                leaky_relu()
-            ))
-
+        layers.extend(
+            nn.Sequential(
+                Upsample(dim_in), conv2d_3x3(dim_in, dim_out), leaky_relu()
+            )
+            for dim_in, dim_out in zip(dims[:-1], dims[1:])
+        )
         self.net = nn.Sequential(*layers)
 
     @property
@@ -1285,7 +1272,7 @@ class VisionAidedDiscriminator(nn.Module):
 
     @property
     def total_params(self):
-        return sum([p.numel() for p in self.parameters()])
+        return sum(p.numel() for p in self.parameters())
 
     @beartype
     def forward(
@@ -1334,10 +1321,7 @@ class VisionAidedDiscriminator(nn.Module):
 
             logits.append(layer_logits)
 
-        if not return_clip_encodings:
-            return logits
-
-        return logits, image_encodings
+        return logits if not return_clip_encodings else (logits, image_encodings)
 
 class Predictor(nn.Module):
     def __init__(
@@ -1357,7 +1341,7 @@ class Predictor(nn.Module):
         klass = nn.Conv2d if unconditional else partial(AdaptiveConv2DMod, num_conv_kernels = num_conv_kernels)
         klass_kwargs = dict(padding = 1) if unconditional else dict()
 
-        for ind in range(depth):
+        for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 klass(dim, dim, 3, **klass_kwargs),
                 leaky_relu(),
@@ -1375,11 +1359,9 @@ class Predictor(nn.Module):
     ):
         residual = self.residual_fn(x)
 
-        kwargs = dict()
-
-        if not self.unconditional:
-            kwargs = dict(mod = mod, kernel_mod = kernel_mod)
-
+        kwargs = (
+            dict() if self.unconditional else dict(mod=mod, kernel_mod=kernel_mod)
+        )
         for conv1, activation, conv2, activation in self.layers:
 
             inner_residual = x
@@ -1447,7 +1429,7 @@ class Discriminator(nn.Module):
 
         assert all([*map(lambda t: t < image_size, multiscale_output_resolutions)])
 
-        if len(multiscale_input_resolutions) > 0 and len(multiscale_output_resolutions) > 0:
+        if len(multiscale_input_resolutions) > 0 and multiscale_output_resolutions:
             assert max(multiscale_input_resolutions) > max(multiscale_output_resolutions)
             assert min(multiscale_input_resolutions) > min(multiscale_output_resolutions)
 
@@ -1586,7 +1568,7 @@ class Discriminator(nn.Module):
 
     @property
     def total_params(self):
-        return sum([p.numel() for p in self.parameters()])
+        return sum(p.numel() for p in self.parameters())
 
     @property
     def device(self):

@@ -22,14 +22,20 @@ def all_gather_variable_dim(t, dim = 0, sizes = None):
 
     if not exists(sizes):
         size = torch.tensor(t.shape[dim], device = device, dtype = torch.long)
-        sizes = [torch.empty_like(size, device = device, dtype = torch.long) for i in range(world_size)]
+        sizes = [
+            torch.empty_like(size, device=device, dtype=torch.long)
+            for _ in range(world_size)
+        ]
         dist.all_gather(sizes, size)
         sizes = torch.stack(sizes)
 
     max_size = sizes.amax().item()
     padded_t = pad_dim_to(t, max_size, dim = dim)
 
-    gathered_tensors = [torch.empty(padded_t.shape, device = device, dtype = padded_t.dtype) for i in range(world_size)]
+    gathered_tensors = [
+        torch.empty(padded_t.shape, device=device, dtype=padded_t.dtype)
+        for _ in range(world_size)
+    ]
     dist.all_gather(gathered_tensors, padded_t)
 
     gathered_tensor = torch.cat(gathered_tensors, dim = dim)

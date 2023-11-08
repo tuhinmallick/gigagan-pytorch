@@ -17,10 +17,7 @@ def exists(val):
     return val is not None
 
 def convert_image_to_fn(img_type, image):
-    if image.mode == img_type:
-        return image
-
-    return image.convert(img_type)
+    return image if image.mode == img_type else image.convert(img_type)
 
 # custom collation function
 # so dataset can return a str and it will collate into List[str]
@@ -60,7 +57,7 @@ class ImageDataset(Dataset):
 
         self.paths = [p for ext in exts for p in Path(f'{folder}').glob(f'**/*.{ext}')]
 
-        assert len(self.paths) > 0, 'your folder contains no images'
+        assert self.paths, 'your folder contains no images'
         assert len(self.paths) > 100, 'you need at least 100 images, 10k for research paper, millions for miraculous results (try Laion-5B)'
 
         maybe_convert_fn = partial(convert_image_to_fn, convert_image_to) if exists(convert_image_to) else nn.Identity()
