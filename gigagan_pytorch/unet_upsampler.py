@@ -32,9 +32,7 @@ def default(val, d):
     return d() if callable(d) else d
 
 def cast_tuple(t, length = 1):
-    if isinstance(t, tuple):
-        return t
-    return ((t,) * length)
+    return t if isinstance(t, tuple) else ((t,) * length)
 
 def identity(t, *args, **kwargs):
     return t
@@ -418,8 +416,7 @@ class UnetUpsampler(BaseGenerator):
         self.mid_block2 = block_klass(mid_dim, mid_dim)
         self.mid_to_rgb = nn.Conv2d(mid_dim, channels, 1)
 
-        for ind, ((dim_in, dim_out), layer_cross_attn, layer_full_attn, layer_attn_depth) in enumerate(zip(reversed(in_out), reversed(full_attn), reversed(cross_attn), reversed(attn_depths))):
-
+        for (dim_in, dim_out), layer_cross_attn, layer_full_attn, layer_attn_depth in zip(reversed(in_out), reversed(full_attn), reversed(cross_attn), reversed(attn_depths)):
             attn_klass = FullAttention if layer_full_attn else LinearTransformer
             has_cross_attn = not self.unconditional and layer_cross_attn
 
@@ -461,7 +458,7 @@ class UnetUpsampler(BaseGenerator):
 
     @property
     def total_params(self):
-        return sum([p.numel() for p in self.parameters()])
+        return sum(p.numel() for p in self.parameters())
 
     def resize_image_to(self, x, size):
         return F.interpolate(x, (size, size), mode = self.resize_mode)
@@ -488,15 +485,14 @@ class UnetUpsampler(BaseGenerator):
         # which requires global text tokens to adaptively select the kernels from the main contribution in the paper
         # and fine text tokens to attend to using cross attention
 
-        if not self.unconditional:
-            if exists(texts):
-                assert exists(self.text_encoder)
-                global_text_tokens, fine_text_tokens, text_mask = self.text_encoder(texts)
-            else:
-                assert all([*map(exists, (global_text_tokens, fine_text_tokens, text_mask))])
-        else:
+        if self.unconditional:
             assert not any([*map(exists, (texts, global_text_tokens, fine_text_tokens))])
 
+        elif exists(texts):
+            assert exists(self.text_encoder)
+            global_text_tokens, fine_text_tokens, text_mask = self.text_encoder(texts)
+        else:
+            assert all([*map(exists, (global_text_tokens, fine_text_tokens, text_mask))])
         # styles
 
         if not exists(styles):
@@ -538,16 +534,11 @@ class UnetUpsampler(BaseGenerator):
         x = self.mid_attn(x)
         x = self.mid_block2(x, conv_mods_iter = conv_mods)
 
-        # rgbs
-
-        rgbs = []
-
         init_rgb_shape = list(x.shape)
         init_rgb_shape[1] = self.channels
 
         rgb = self.mid_to_rgb(x)
-        rgbs.append(rgb)
-
+        rgbs = [rgb]
         # upsample stages
 
         for upsample, upsample_rgb, to_rgb, block1, block2, cross_attn, attn in self.ups:
@@ -581,7 +572,7 @@ class UnetUpsampler(BaseGenerator):
 
         x = self.final_res_block(x, conv_mods_iter = conv_mods)
 
-        assert len([*conv_mods]) == 0
+        assert False
 
         rgb = rgb + self.final_to_rgb(x)
 

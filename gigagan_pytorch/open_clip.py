@@ -88,9 +88,7 @@ class OpenClipAdapter(nn.Module):
     @property
     def image_size(self):
         image_size = self.clip.visual.image_size
-        if isinstance(image_size, tuple):
-            return max(image_size)
-        return image_size
+        return max(image_size) if isinstance(image_size, tuple) else image_size
 
     @property
     def image_channels(self):
